@@ -12,6 +12,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import com.facebook.Request;
@@ -31,8 +32,9 @@ public class FriendListAdapter extends ArrayAdapter<GraphUser> {
     private final List<GraphUser> mFriends;
     private final int mAvatarSize;
     private Request mNextRequest;
-    private View mLoadingView;
     private Boolean mIsLoading;
+    private Boolean mHaveNextRequest;
+    private final LayoutInflater mInflater;
 
     public FriendListAdapter(Context context, int resource, Session session) {
         super(context, resource);
@@ -46,63 +48,85 @@ public class FriendListAdapter extends ArrayAdapter<GraphUser> {
             executeFirstQueryAsync(session);
         }
 
-        LayoutInflater inflater = (LayoutInflater) mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-        mLoadingView = inflater.inflate(R.layout.loading_item, null, false);
+        mInflater = (LayoutInflater) mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+        mHaveNextRequest = true;
     }
 
     @Override
     public int getCount() {
-        if (mLoadingView != null) {
+        if (mHaveNextRequest) {
             return mFriends.size() + 1;
         } else {
             return mFriends.size();
         }
     }
 
+    @Override
+    public int getItemViewType(int position) {
+        if (position == mFriends.size() && mHaveNextRequest) {
+            return 1;
+        }
+        return 0;
+    }
+
+    @Override
+    public int getViewTypeCount() {
+        return 2;
+    }
+
     static class ViewHolder {
         public TextView nameHolder;
         public ImageView pictureHolder;
+        public ProgressBar progressBar;
     }
 
     public View getView(int position, View convertview, ViewGroup parent) {
-        if (position >= mFriends.size()) {
-            if (!mIsLoading  && mNextRequest != null) {
-                mIsLoading = true;
-                mNextRequest.executeAsync();
-            }
-            return mLoadingView;
+        if (position == mFriends.size() && !mIsLoading  && mNextRequest != null) {
+            mIsLoading = true;
+            mNextRequest.executeAsync();
         }
 
         ViewHolder viewHolder;
+        int viewType = getItemViewType(position);
 
-        if (convertview == null || convertview.getTag() == null) {
-            LayoutInflater inflater = (LayoutInflater) mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-            convertview = inflater.inflate(R.layout.list_item, null, false);
+        if (convertview == null) {
+            convertview = mInflater.inflate(R.layout.list_item, null, false);
             viewHolder = new ViewHolder();
             viewHolder.nameHolder = (TextView) convertview.findViewById(R.id.name);
             viewHolder.pictureHolder = (ImageView) convertview.findViewById(R.id.picture);
+            viewHolder.progressBar = (ProgressBar) convertview.findViewById(R.id.progressbar);
             convertview.setTag(viewHolder);
         } else {
             viewHolder = (ViewHolder) convertview.getTag();
         }
 
-        GraphUser friend = mFriends.get(position);
+        if (viewType == 0) {
+            GraphUser friend = mFriends.get(position);
 
-        viewHolder.nameHolder.setText(friend.getName());
+            viewHolder.progressBar.setVisibility(View.GONE);
+            viewHolder.nameHolder.setVisibility(View.VISIBLE);
+            viewHolder.pictureHolder.setVisibility(View.VISIBLE);
 
-        Uri.Builder builder = new Uri.Builder();
-        builder.scheme("https")
-            .authority("graph.facebook.com")
-            .appendPath(friend.getId().toString())
-            .appendPath("picture")
-            .appendQueryParameter("type", "large");
+            viewHolder.nameHolder.setText(friend.getName());
 
-        Picasso.with(mContext).setLoggingEnabled(true);
-        Picasso.with(mContext).load(builder.build())
-            .resize(mAvatarSize, mAvatarSize)
-            .centerCrop()
-            .placeholder(R.drawable.person)
-            .into(viewHolder.pictureHolder);
+            Uri.Builder builder = new Uri.Builder();
+            builder.scheme("https")
+                .authority("graph.facebook.com")
+                .appendPath(friend.getId().toString())
+                .appendPath("picture")
+                .appendQueryParameter("type", "large");
+
+            Picasso.with(mContext).setLoggingEnabled(true);
+            Picasso.with(mContext).load(builder.build())
+                .resize(mAvatarSize, mAvatarSize)
+                .centerCrop()
+                .placeholder(R.drawable.person)
+                .into(viewHolder.pictureHolder);
+        } else {
+            viewHolder.progressBar.setVisibility(View.VISIBLE);
+            viewHolder.nameHolder.setVisibility(View.GONE);
+            viewHolder.pictureHolder.setVisibility(View.GONE);
+        }
 
         return convertview;
     }
@@ -115,7 +139,7 @@ public class FriendListAdapter extends ArrayAdapter<GraphUser> {
             if (mNextRequest != null) {
                 mNextRequest.setCallback(mCallBack);
             } else {
-                mLoadingView = null;
+                mHaveNextRequest = false;
             }
             updateDataSet(response);
         }
@@ -123,8 +147,10 @@ public class FriendListAdapter extends ArrayAdapter<GraphUser> {
 
     private void updateDataSet(Response response) {
         GraphMultiResult multiResult = response.getGraphObjectAs(GraphMultiResult.class);
-        GraphObjectList<GraphObject> data = multiResult.getData();
-        mFriends.addAll(data.castToListOf(GraphUser.class));
+        if (multiResult != null) {
+            GraphObjectList<GraphObject> data = multiResult.getData();
+            mFriends.addAll(data.castToListOf(GraphUser.class));
+        }
         mIsLoading = false;
         notifyDataSetChanged();
     }
